@@ -1,0 +1,1325 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes, viewport-fit=cover"/>
+    
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="DocSafe 2.4.0">
+    
+    <!-- LINK AL ARCHIVO MANIFEST.JSON SEPARADO -->
+    <link rel="manifest" href="./manifest.json">
+    <link rel="apple-touch-icon" href="https://cdn-icons-png.flaticon.com/512/1161/1161388.png">
+    <link rel="icon" type="image/png" href="https://cdn-icons-png.flaticon.com/512/1161/1161388.png">
+    
+    <title>DocSafe 2.4.0 🛡️ Menorca Cloud</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0" rel="stylesheet" />
+    
+    <!-- FIREBASE -->
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+
+    <!-- LIBRERÍAS DE RENDERIZADO Y CREACIÓN DE PDF -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+    <style>
+        [x-cloak] { display: none !important; }
+        body { background-color: #0f172a; color: #f1f5f9; font-family: system-ui, sans-serif; overflow-x: hidden; padding-top: env(safe-area-inset-top); }
+        .card-doc { background: #1e293b; border-radius: 1.5rem; border: 1px solid #334155; }
+        .expiry-warning { border-left: 6px solid #ef4444; background: #271017; }
+        .nomina-style { border-left: 6px solid #22c55e; }
+        input, select { background: #0f172a !important; border: 1px solid #334155 !important; color: white !important; }
+        .loading-overlay { background: rgba(15, 23, 42, 0.98); backdrop-filter: blur(10px); }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .thumb-img { object-fit: cover; width: 100%; height: 100%; border-radius: 1rem; }
+        
+        .zoom-scroll-container {
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+            display: block;
+            touch-action: auto;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        .pdf-canvas-container canvas { 
+            max-width: 100%; 
+            height: auto !important; 
+            margin-bottom: 15px; 
+            border-radius: 0.5rem; 
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5); 
+        }
+
+        @keyframes alertFlash {
+            0%, 100% { background-color: #0f172a; }
+            50% { background-color: #7f1d1d; }
+        }
+        .flash-alert {
+            animation: alertFlash 0.6s ease-in-out 3;
+        }
+    </style>
+</head>
+<body x-data="docApp()" x-init="init()" :class="{'flash-alert': hayCaducadosAlerta}" class="pb-10">
+
+    <!-- MOTOR PWA FÍSICO -->
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('./sw.js').catch(console.error);
+            });
+        }
+    </script>
+
+    <!-- PANTALLA DE SEGURIDAD -->
+    <div x-show="!usuarioLogueado" class="fixed inset-0 z-[300] bg-slate-900 flex flex-col items-center justify-center p-6" x-transition x-cloak>
+        <div class="text-center mb-10">
+            <span class="material-symbols-outlined text-[80px] text-blue-500 mb-4 drop-shadow-[0_0_15px_rgba(59,130,246,0.5)]">shield_lock</span>
+            <h1 class="text-4xl font-black italic text-white tracking-tighter">Doc<span class="text-blue-500">Safe</span></h1>
+            <p class="text-xs font-bold text-slate-500 uppercase tracking-[0.3em] mt-2">Bóveda Privada</p>
+        </div>
+        
+        <div class="w-full max-w-sm space-y-4 card-doc p-6 shadow-2xl">
+            <p class="text-red-400 text-xs font-bold text-center h-4" x-text="errorLogin"></p>
+            <input type="email" x-model="loginData.email" placeholder="Correo electrónico" class="w-full p-4 rounded-xl text-sm font-bold outline-none focus:ring-2 ring-blue-500">
+            <input type="password" x-model="loginData.pass" placeholder="Contraseña" class="w-full p-4 rounded-xl text-sm font-bold outline-none focus:ring-2 ring-blue-500">
+            <button @click="iniciarSesion()" class="w-full py-4 bg-blue-600 rounded-xl font-black text-white uppercase text-sm shadow-[0_0_20px_rgba(37,99,235,0.4)] active:bg-blue-700 transition-colors mt-4">
+                Desbloquear Bóveda
+            </button>
+        </div>
+    </div>
+
+    <!-- PANEL DE AJUSTES -->
+    <div x-show="modalAjustes" class="fixed inset-0 z-[250] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm" x-transition x-cloak>
+        <div class="card-doc p-6 w-full max-w-sm space-y-5 shadow-2xl border-slate-700">
+            <div class="flex justify-between items-center border-b border-white/10 pb-3">
+                <h3 class="text-sm font-black text-white uppercase tracking-wider flex items-center gap-2">
+                    <span class="material-symbols-outlined text-slate-400">settings</span> Ajustes de la Bóveda
+                </h3>
+                <button @click="modalAjustes = false" class="text-slate-400 hover:text-white">
+                    <span class="material-symbols-outlined">close</span>
+                </button>
+            </div>
+            
+            <div class="space-y-4">
+                <div class="bg-slate-800/80 p-4 rounded-2xl border border-white/5 space-y-2">
+                    <div class="flex justify-between items-center">
+                        <span class="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                            <span class="material-symbols-outlined text-blue-400 text-base">cloud</span> Capacidad de la Bóveda
+                        </span>
+                        <span class="text-[10px] font-black text-blue-400" x-text="docs.length + ' / 3.500 docs'"></span>
+                    </div>
+                    <div class="w-full bg-slate-900 h-2 rounded-full overflow-hidden">
+                        <div class="bg-blue-500 h-full transition-all duration-300" :style="'width: ' + Math.min((docs.length / 3500) * 100, 100) + '%'"></div>
+                    </div>
+                    <p class="text-[9px] text-slate-500 font-bold text-right">Base de datos unificada IndexedDB / Cloud</p>
+                </div>
+
+                <div class="bg-slate-800/80 p-4 rounded-2xl border border-white/5 flex items-center justify-between">
+                    <div>
+                        <h4 class="text-xs font-bold text-slate-200">Copia de Seguridad</h4>
+                        <p class="text-[10px] text-slate-500">Exportar índice de documentos en JSON</p>
+                    </div>
+                    <button @click="exportarCopiaSeguridad()" class="px-3 py-1.5 bg-emerald-600/20 text-emerald-400 border border-emerald-500/30 rounded-xl text-[10px] font-black uppercase active:scale-95 transition-transform flex items-center gap-1">
+                        <span class="material-symbols-outlined text-xs">download</span> Exportar
+                    </button>
+                </div>
+
+                <div class="bg-slate-800/80 p-4 rounded-2xl border border-white/5 flex items-center justify-between">
+                    <div>
+                        <h4 class="text-xs font-bold text-slate-200">Avisos de Caducidad</h4>
+                        <p class="text-[10px] text-slate-500">Notificar 7 días antes del vencimiento</p>
+                    </div>
+                    <button @click="solicitarPermisoNotificaciones()" class="px-3 py-1.5 bg-blue-600/20 text-blue-400 border border-blue-500/30 rounded-xl text-[10px] font-black uppercase active:scale-95 transition-transform">
+                        Probar
+                    </button>
+                </div>
+
+                <div class="pt-2">
+                    <button @click="cerrarSesion()" class="w-full py-3.5 bg-red-500/10 border border-red-500/30 text-red-400 rounded-xl text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 active:bg-red-500/20 transition-colors">
+                        <span class="material-symbols-outlined text-base">logout</span> Cerrar Sesión Segura
+                    </button>
+                </div>
+            </div>
+
+            <div class="text-center pt-2 border-t border-white/5">
+                <p class="text-[9px] font-black text-slate-600 uppercase tracking-widest">DocSafe v2.4.0 • Menorca Cloud</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL DE RENOVACIÓN DE FECHA -->
+    <div x-show="modalRenovar" class="fixed inset-0 z-[250] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm" x-transition x-cloak>
+        <div class="card-doc p-6 w-full max-w-sm space-y-4 shadow-2xl border-blue-500/40">
+            <div class="flex justify-between items-center border-b border-white/10 pb-3">
+                <h3 class="text-sm font-black text-white uppercase tracking-wider flex items-center gap-2">
+                    <span class="material-symbols-outlined text-blue-400">edit_calendar</span> Renovación de Fecha
+                </h3>
+                <button @click="modalRenovar = false" class="text-slate-400 hover:text-white">
+                    <span class="material-symbols-outlined">close</span>
+                </button>
+            </div>
+            
+            <div>
+                <p class="text-xs font-bold text-slate-300 mb-1" x-text="docEditando?.nombre"></p>
+                <p class="text-[10px] text-slate-500 mb-4">Introduce la nueva fecha de caducidad para actualizar la alerta.</p>
+                
+                <label class="text-[10px] font-black uppercase text-blue-400 tracking-wider block mb-1">Nueva Fecha</label>
+                <input type="date" x-model="nuevaFechaEdicion" class="w-full p-4 rounded-2xl text-xs font-bold outline-none uppercase mb-4">
+            </div>
+
+            <div class="grid grid-cols-2 gap-3 pt-2">
+                <button @click="modalRenovar = false" class="py-3 bg-slate-700 rounded-xl font-black text-white uppercase text-[11px] hover:bg-slate-600 transition-colors">
+                    Cancelar
+                </button>
+                <button @click="guardarNuevaFecha()" class="py-3 bg-blue-600 rounded-xl font-black text-white uppercase text-[11px] shadow-lg active:bg-blue-700 transition-colors flex items-center justify-center gap-1">
+                    <span class="material-symbols-outlined text-sm">save</span> Guardar
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL MOVER / REUBICAR DOCUMENTO -->
+    <div x-show="modalMover" class="fixed inset-0 z-[250] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm" x-transition x-cloak>
+        <div class="card-doc p-6 w-full max-w-sm space-y-4 shadow-2xl border-purple-500/40">
+            <div class="flex justify-between items-center border-b border-white/10 pb-3">
+                <h3 class="text-sm font-black text-white uppercase tracking-wider flex items-center gap-2">
+                    <span class="material-symbols-outlined text-purple-400">drive_file_move</span> Mover Documento
+                </h3>
+                <button @click="modalMover = false" class="text-slate-400 hover:text-white">
+                    <span class="material-symbols-outlined">close</span>
+                </button>
+            </div>
+            
+            <div>
+                <p class="text-xs font-bold text-white mb-1 truncate" x-text="docEditando?.nombre"></p>
+                <p class="text-[10px] text-slate-400 mb-4">Selecciona el nuevo destino para este archivo:</p>
+                
+                <label class="text-[10px] font-black uppercase text-purple-400 tracking-wider block mb-1">Nueva Categoría</label>
+                <select x-model="nuevaCatMover" @change="nuevaSubMover = ''" class="w-full p-4 rounded-2xl text-xs font-bold outline-none uppercase mb-3">
+                    <template x-for="cat in categorias">
+                        <option :value="cat.id" x-text="cat.nombre"></option>
+                    </template>
+                </select>
+
+                <label class="text-[10px] font-black uppercase text-purple-400 tracking-wider block mb-1">Nueva Subcarpeta</label>
+                <select x-model="nuevaSubMover" class="w-full p-4 rounded-2xl text-xs font-bold outline-none uppercase mb-4">
+                    <option value="">(Sin carpeta / Raíz)</option>
+                    <template x-for="sub in obtenerSubcarpetasDeCat(nuevaCatMover)" :key="sub.id">
+                        <option :value="sub.nombre" x-text="'📁 ' + sub.nombre"></option>
+                    </template>
+                </select>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3 pt-2">
+                <button @click="modalMover = false" class="py-3 bg-slate-700 rounded-xl font-black text-white uppercase text-[11px] hover:bg-slate-600 transition-colors">
+                    Cancelar
+                </button>
+                <button @click="guardarMoverDocumento()" class="py-3 bg-purple-600 rounded-xl font-black text-white uppercase text-[11px] shadow-lg active:bg-purple-700 transition-colors flex items-center justify-center gap-1">
+                    <span class="material-symbols-outlined text-sm">check_circle</span> Mover Aquí
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL CREAR NUEVA SUBCARPETA -->
+    <div x-show="modalNuevaCarpeta" class="fixed inset-0 z-[250] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm" x-transition x-cloak>
+        <div class="card-doc p-6 w-full max-w-sm space-y-4 shadow-2xl border-amber-500/40">
+            <div class="flex justify-between items-center border-b border-white/10 pb-3">
+                <h3 class="text-sm font-black text-white uppercase tracking-wider flex items-center gap-2">
+                    <span class="material-symbols-outlined text-amber-400">create_new_folder</span> Nueva Carpeta
+                </h3>
+                <button @click="modalNuevaCarpeta = false" class="text-slate-400 hover:text-white">
+                    <span class="material-symbols-outlined">close</span>
+                </button>
+            </div>
+            
+            <div>
+                <p class="text-xs text-slate-400 mb-3">Crear dentro de <strong class="text-amber-400" x-text="categoriaSeleccionada"></strong></p>
+                
+                <div class="bg-amber-500/10 p-3 rounded-2xl border border-amber-500/20 mb-4 space-y-2">
+                    <p class="text-[10px] font-black uppercase text-amber-400">⚡ Creación Rápida Mensual</p>
+                    <div class="flex gap-2">
+                        <select x-model="anoSeleccionadoCarpetas" class="p-2 rounded-xl text-xs font-bold outline-none flex-grow">
+                            <option value="2025">Año 2025</option>
+                            <option value="2026">Año 2026</option>
+                            <option value="2027">Año 2027</option>
+                        </select>
+                        <button @click="generarCarpetasAnoCompleto()" class="px-3 py-2 bg-amber-500 text-slate-900 rounded-xl font-black text-[10px] uppercase shadow active:scale-95 transition-transform">
+                            Crear 12 Meses
+                        </button>
+                    </div>
+                </div>
+
+                <label class="text-[10px] font-black uppercase text-slate-400 tracking-wider block mb-1">O escribe un nombre manual:</label>
+                <input type="text" x-model="nombreNuevaCarpeta" placeholder="Ej: ENERO 2026, CAP, IRPF..." class="w-full p-4 rounded-2xl text-xs font-bold outline-none mb-4">
+            </div>
+
+            <div class="grid grid-cols-2 gap-3 pt-2">
+                <button @click="modalNuevaCarpeta = false" class="py-3 bg-slate-700 rounded-xl font-black text-white uppercase text-[11px] hover:bg-slate-600 transition-colors">
+                    Cancelar
+                </button>
+                <button @click="crearCarpeta()" class="py-3 bg-amber-600 rounded-xl font-black text-white uppercase text-[11px] shadow-lg active:bg-amber-700 transition-colors flex items-center justify-center gap-1">
+                    <span class="material-symbols-outlined text-sm">add_folder</span> Crear Individual
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- PANTALLA DE CARGA -->
+    <div x-show="loading && usuarioLogueado" class="fixed inset-0 z-[100] loading-overlay flex flex-col items-center justify-center p-8 text-center" x-transition x-cloak>
+        <div class="relative flex items-center justify-center mb-8">
+            <div class="animate-spin rounded-full h-24 w-24 border-t-4 border-blue-500"></div>
+            <span class="absolute material-symbols-outlined text-4xl text-blue-500">shield</span>
+        </div>
+        <p class="text-xl font-black text-white uppercase tracking-widest mb-2" x-text="statusMsg"></p>
+        <button @click="forzarCancelacion()" class="mt-8 px-6 py-2 border border-red-500 text-red-500 rounded-full text-xs font-bold uppercase tracking-widest active:bg-red-500 active:text-white transition-colors">Cancelar</button>
+    </div>
+
+    <!-- VISOR INTEGRADO COMPLETO -->
+    <div x-show="docViewer" class="fixed inset-0 z-[200] bg-black/95 flex flex-col backdrop-blur-xl" x-transition x-cloak>
+        <div class="p-4 flex justify-between items-center border-b border-white/10 bg-slate-900 z-10">
+            <div class="truncate max-w-[40%]">
+                <h3 class="text-white font-black truncate" x-text="docActual?.nombre"></h3>
+            </div>
+            
+            <div class="flex items-center gap-2 bg-slate-800 rounded-full p-1 border border-white/10">
+                <button @click="zoomOut()" class="text-white w-8 h-8 flex items-center justify-center hover:bg-slate-700 active:scale-90 transition-transform rounded-full">
+                    <span class="material-symbols-outlined text-xl">zoom_out</span>
+                </button>
+                <span class="text-[10px] font-mono font-black text-slate-300 w-10 text-center" x-text="zoomWidth + '%'"></span>
+                <button @click="zoomIn()" class="text-white w-8 h-8 flex items-center justify-center hover:bg-slate-700 active:scale-90 transition-transform rounded-full">
+                    <span class="material-symbols-outlined text-xl">zoom_in</span>
+                </button>
+                <button @click="zoomReset()" class="text-slate-400 w-8 h-8 flex items-center justify-center hover:bg-slate-700 active:scale-90 transition-transform rounded-full border-l border-white/5">
+                    <span class="material-symbols-outlined text-lg">restart_alt</span>
+                </button>
+            </div>
+
+            <button @click="cerrarVisor()" class="bg-slate-850 text-white p-3 rounded-full hover:bg-red-500 transition-colors">
+                <span class="material-symbols-outlined">close</span>
+            </button>
+        </div>
+        
+        <div class="flex-grow zoom-scroll-container p-4">
+            <template x-if="docActual && !docActual.esPDF">
+                <div class="flex items-center justify-center min-w-full min-h-full">
+                    <img :src="docActual.dataBase64" 
+                         :style="'width: ' + zoomWidth + '%; max-width: none; max-height: none;'" 
+                         class="rounded-lg shadow-2xl object-contain transition-all duration-150 ease-out">
+                </div>
+            </template>
+
+            <template x-if="docActual && docActual.esPDF">
+                <div class="w-full flex flex-col items-center min-h-full">
+                    <div x-show="cargandoPDF" class="text-center py-10 w-full">
+                        <div class="animate-spin rounded-full h-10 w-10 border-t-2 border-blue-500 mx-auto mb-4"></div>
+                        <p class="text-sm font-bold text-slate-400">Preparando lectura de documento...</p>
+                    </div>
+                    <div id="pdf-viewer-container" 
+                         :style="'width: ' + zoomWidth + '%; max-width: none;'" 
+                         class="pdf-canvas-container flex flex-col items-center transition-all duration-150 ease-out"></div>
+                </div>
+            </template>
+        </div>
+    </div>
+
+    <!-- APP PRINCIPAL -->
+    <template x-if="usuarioLogueado">
+        <div>
+            <!-- CABECERA PRINCIPAL LIMPIA -->
+            <header class="p-5 flex justify-between items-center bg-slate-900/90 backdrop-blur-md sticky top-0 z-10 border-b border-blue-500/20">
+                <div>
+                    <div class="flex items-center gap-2">
+                        <h1 class="text-3xl font-black tracking-tighter italic text-white">Doc<span class="text-blue-500">Safe</span></h1>
+                        <span class="bg-slate-800 text-slate-400 text-[9px] font-black uppercase px-2 py-0.5 rounded-md tracking-wider">v2.4.0</span>
+                    </div>
+                </div>
+                
+                <div class="flex items-center gap-2">
+                    <button @click="modoSoloCaducados = !modoSoloCaducados" :class="modoSoloCaducados ? 'bg-red-600 text-white border-red-500' : 'bg-slate-800 text-slate-300 border-slate-700'" class="border p-3 rounded-2xl active:scale-90 transition-transform relative">
+                        <span class="material-symbols-outlined text-xl">warning</span>
+                        <template x-if="totalCaducados > 0">
+                            <span class="absolute -top-1 -right-1 bg-red-500 text-white text-[8px] font-black w-4 h-4 rounded-full flex items-center justify-center" x-text="totalCaducados"></span>
+                        </template>
+                    </button>
+
+                    <button @click="modalAjustes = true" class="bg-slate-800 text-slate-300 border border-slate-700 p-3 rounded-2xl active:scale-90 transition-transform">
+                        <span class="material-symbols-outlined text-xl">settings</span>
+                    </button>
+
+                    <button @click="showEditor = !showEditor" class="bg-blue-600 p-3 rounded-2xl shadow-[0_0_20px_rgba(37,99,235,0.4)] active:scale-90 transition-transform flex items-center justify-center">
+                        <span class="material-symbols-outlined text-white font-black" x-text="showEditor ? 'close' : 'add'"></span>
+                    </button>
+                </div>
+            </header>
+
+            <main class="p-4 space-y-6">
+                <!-- BUSCADOR INTELIGENTE EN TIEMPO REAL -->
+                <div class="relative">
+                    <span class="material-symbols-outlined absolute left-4 top-3.5 text-slate-500">search</span>
+                    <input type="text" x-model="busquedaQuery" placeholder="Buscar documento (ej: CAP, Nómina, Enero...)" class="w-full pl-12 pr-10 py-3.5 rounded-2xl text-xs font-bold outline-none border border-slate-800 focus:border-blue-500 transition-colors">
+                    <button x-show="busquedaQuery" @click="busquedaQuery = ''" class="absolute right-4 top-3.5 text-slate-500 hover:text-white">
+                        <span class="material-symbols-outlined text-sm">close</span>
+                    </button>
+                </div>
+
+                <!-- MODO FILTRO ALERTA DE CADUCIDADES ACTIVADO -->
+                <template x-if="modoSoloCaducados">
+                    <div class="space-y-4">
+                        <div class="flex justify-between items-center bg-red-500/10 p-3.5 rounded-2xl border border-red-500/30">
+                            <span class="text-xs font-black text-red-400 uppercase tracking-wider flex items-center gap-2">
+                                <span class="material-symbols-outlined">warning</span> Alertas y Vencimientos
+                            </span>
+                            <button @click="modoSoloCaducados = false" class="text-xs font-bold text-slate-400 hover:text-white">Ver Todo</button>
+                        </div>
+
+                        <div class="grid gap-3">
+                            <template x-if="docsCaducadosLista.length === 0">
+                                <div class="text-center p-8 text-slate-500 card-doc">
+                                    <span class="material-symbols-outlined text-4xl mb-2 text-emerald-400">check_circle</span>
+                                    <p class="font-bold text-xs">No tienes documentos vencidos ni próximos a vencer.</p>
+                                </div>
+                            </template>
+
+                            <template x-for="doc in docsCaducadosLista" :key="doc.id">
+                                <div class="card-doc p-4 flex items-center justify-between active:scale-[0.98] transition-transform overflow-hidden relative expiry-warning">
+                                    <div class="flex items-center gap-4 flex-grow cursor-pointer" @click="abrirVisor(doc)">
+                                        <div class="w-14 h-14 rounded-xl overflow-hidden bg-slate-800 flex items-center justify-center border border-white/10 flex-shrink-0">
+                                            <template x-if="!doc.esPDF && doc.dataBase64"><img :src="doc.dataBase64" class="thumb-img opacity-80"></template>
+                                            <template x-if="doc.esPDF || !doc.dataBase64"><span class="material-symbols-outlined text-3xl text-red-400">picture_as_pdf</span></template>
+                                        </div>
+                                        <div>
+                                            <h3 class="font-black text-white text-sm" x-text="doc.nombre"></h3>
+                                            <p class="text-[10px] font-bold text-red-400" x-text="doc.fecha ? 'Caduca: ' + formatDate(doc.fecha) : ''"></p>
+                                        </div>
+                                    </div>
+                                    <button @click.stop="abrirModalRenovar(doc)" title="Renovar fecha" class="text-blue-400 p-2"><span class="material-symbols-outlined text-xl">edit_calendar</span></button>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                </template>
+
+                <!-- VISTA RESULTADOS DE BÚSQUEDA -->
+                <template x-if="busquedaQuery.trim() !== '' && !modoSoloCaducados">
+                    <div class="space-y-4">
+                        <div class="flex justify-between items-center px-1">
+                            <h3 class="text-xs font-black uppercase tracking-widest text-blue-400">Resultados de búsqueda</h3>
+                            <span class="text-[10px] text-slate-500 font-bold" x-text="docsFiltradosBusqueda.length + ' encontrados'"></span>
+                        </div>
+
+                        <div class="grid gap-3">
+                            <template x-if="docsFiltradosBusqueda.length === 0">
+                                <div class="text-center p-8 text-slate-600 card-doc">
+                                    <p class="font-bold text-xs">No se encontraron documentos con esa palabra.</p>
+                                </div>
+                            </template>
+
+                            <template x-for="doc in docsFiltradosBusqueda" :key="doc.id">
+                                <div class="card-doc p-4 flex items-center justify-between active:scale-[0.98] transition-transform overflow-hidden relative" :class="{'expiry-warning': esCaducado(doc.fecha)}">
+                                    <div class="flex items-center gap-4 flex-grow cursor-pointer" @click="abrirVisor(doc)">
+                                        <div class="w-14 h-14 rounded-xl overflow-hidden bg-slate-800 flex items-center justify-center border border-white/10 flex-shrink-0">
+                                            <template x-if="!doc.esPDF && doc.dataBase64"><img :src="doc.dataBase64" class="thumb-img opacity-80"></template>
+                                            <template x-if="doc.esPDF || !doc.dataBase64"><span class="material-symbols-outlined text-3xl text-red-400">picture_as_pdf</span></template>
+                                        </div>
+                                        <div>
+                                            <h3 class="font-black text-white text-sm" x-text="doc.nombre"></h3>
+                                            <span class="text-[9px] font-black bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded-md uppercase" x-text="obtenerNombreCategoria(doc.categoria)"></span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                </template>
+
+                <!-- PANEL DE SUBIDA -->
+                <section x-show="showEditor" x-transition x-cloak class="card-doc p-6 space-y-5 shadow-2xl border-blue-500/40">
+                    <h2 class="text-xs font-black text-blue-400 uppercase tracking-widest flex items-center gap-2"><span class="material-symbols-outlined">lock</span> Guardar Documento</h2>
+                    <div class="space-y-4">
+                        
+                        <template x-if="archivoPendiente">
+                            <div class="bg-green-500/20 border border-green-500/50 p-4 rounded-2xl flex items-center gap-3 shadow-lg">
+                                <span class="material-symbols-outlined text-green-400 text-3xl">task</span>
+                                <div class="flex-grow">
+                                    <h4 class="text-green-400 font-black text-[10px] uppercase tracking-widest">Archivo Recibido</h4>
+                                    <p class="text-white text-sm truncate max-w-[200px]" x-text="archivoPendiente.nombreVisible"></p>
+                                </div>
+                                <button @click="cancelarCompartido()" class="text-red-400 p-2 bg-red-500/10 rounded-xl"><span class="material-symbols-outlined">close</span></button>
+                            </div>
+                        </template>
+
+                        <input type="text" x-model="nuevo.nombre" placeholder="Nombre (Ej: Nómina Mayo...)" class="w-full p-4 rounded-2xl text-base font-bold outline-none focus:ring-2 ring-blue-500">
+                        
+                        <div class="grid grid-cols-2 gap-3">
+                            <select x-model="nuevo.categoria" @change="nuevo.subcarpeta = ''" class="p-4 rounded-2xl text-xs font-bold outline-none uppercase">
+                                <template x-for="cat in categorias">
+                                    <option :value="cat.id" x-text="cat.nombre"></option>
+                                </template>
+                            </select>
+
+                            <select x-model="nuevo.subcarpeta" class="p-4 rounded-2xl text-xs font-bold outline-none uppercase">
+                                <option value="">(Sin carpeta)</option>
+                                <template x-for="sub in obtenerSubcarpetasDeCat(nuevo.categoria)" :key="sub.id">
+                                    <option :value="sub.nombre" x-text="'📁 ' + sub.nombre"></option>
+                                </template>
+                            </select>
+                        </div>
+
+                        <input type="date" x-model="nuevo.fecha" class="w-full p-4 rounded-2xl text-xs font-bold outline-none uppercase">
+                        
+                        <template x-if="!archivoPendiente">
+                            <div class="grid grid-cols-3 gap-2 pt-2">
+                                <button @click="$refs.scanInput.click()" class="py-4 bg-emerald-600 rounded-[1.2rem] font-black text-white uppercase text-[10px] flex flex-col items-center justify-center gap-1 shadow-lg active:bg-emerald-700 transition-colors">
+                                    <span class="material-symbols-outlined text-2xl">document_scanner</span> ESCANEAR PDF
+                                </button>
+                                <button @click="$refs.camInput.click()" class="py-4 bg-blue-600 rounded-[1.2rem] font-black text-white uppercase text-[10px] flex flex-col items-center justify-center gap-1 shadow-lg active:bg-blue-700 transition-colors">
+                                    <span class="material-symbols-outlined text-2xl">photo_camera</span> FOTO
+                                </button>
+                                <button @click="$refs.fileInput.click()" class="py-4 bg-slate-700 rounded-[1.2rem] font-black text-white uppercase text-[10px] flex flex-col items-center justify-center gap-1 border border-white/10 active:bg-slate-600 transition-colors">
+                                    <span class="material-symbols-outlined text-2xl">folder_zip</span> ARCHIVO
+                                </button>
+                            </div>
+                        </template>
+
+                        <template x-if="archivoPendiente">
+                            <div class="pt-2">
+                                <button @click="procesarArchivoPendiente()" class="w-full py-5 bg-green-600 rounded-[1.5rem] font-black text-white uppercase text-[11px] flex items-center justify-center gap-2 shadow-[0_0_20px_rgba(34,197,94,0.4)] active:bg-green-700 transition-colors">
+                                    <span class="material-symbols-outlined text-2xl">save</span> GUARDAR EN LA NUBE
+                                </button>
+                            </div>
+                        </template>
+
+                        <input type="file" x-ref="scanInput" class="hidden" accept="image/*" capture="environment" @change="procesarEscanerPDF($event)">
+                        <input type="file" x-ref="camInput" class="hidden" accept="image/*" capture="environment" @change="procesarInputLocal($event, false)">
+                        <input type="file" x-ref="fileInput" class="hidden" accept="image/*,application/pdf" @change="procesarInputLocal($event, null)">
+                    </div>
+                </section>
+
+                <!-- VISTA 1: MENÚ PRINCIPAL -->
+                <template x-if="!categoriaSeleccionada && !modoSoloCaducados && busquedaQuery.trim() === ''">
+                    <div class="space-y-4">
+                        <div class="flex justify-between items-center px-2">
+                            <h2 class="text-xs font-black uppercase tracking-widest text-slate-400">Categorías de la Bóveda</h2>
+                            <span class="text-[10px] font-bold text-slate-500" x-text="docs.length + ' documentos'"></span>
+                        </div>
+                        
+                        <div class="grid grid-cols-2 gap-4">
+                            <button @click="seleccionarCategoria('TODOS')" class="card-doc p-5 flex flex-col items-center justify-center gap-3 border-blue-500/20 active:scale-95 transition-transform">
+                                <div class="w-12 h-12 rounded-2xl bg-blue-500/10 flex items-center justify-center text-blue-400">
+                                    <span class="material-symbols-outlined text-3xl">grid_view</span>
+                                </div>
+                                <div class="text-center">
+                                    <h3 class="font-black text-white text-sm">TODOS</h3>
+                                    <p class="text-[10px] text-slate-500 font-bold mt-0.5" x-text="docs.length + ' archivos'"></p>
+                                </div>
+                            </button>
+
+                            <template x-for="cat in categorias" :key="cat.id">
+                                <button @click="seleccionarCategoria(cat.id)" class="card-doc p-5 flex flex-col items-center justify-center gap-3 border-slate-700 active:scale-95 transition-transform relative">
+                                    <template x-if="contarCaducadosCat(cat.id) > 0">
+                                        <span class="absolute top-3 right-3 bg-red-500 text-white text-[9px] font-black w-5 h-5 rounded-full flex items-center justify-center" x-text="contarCaducadosCat(cat.id)"></span>
+                                    </template>
+                                    
+                                    <div class="w-12 h-12 rounded-2xl flex items-center justify-center" :class="cat.bg">
+                                        <span class="material-symbols-outlined text-3xl" :class="cat.color" x-text="cat.icono"></span>
+                                    </div>
+                                    <div class="text-center">
+                                        <h3 class="font-black text-white text-sm" x-text="cat.nombre"></h3>
+                                        <p class="text-[10px] text-slate-500 font-bold mt-0.5" x-text="contarDocsCat(cat.id) + ' archivos'"></p>
+                                    </div>
+                                </button>
+                            </template>
+                        </div>
+                    </div>
+                </template>
+
+                <!-- VISTA 2: DENTRO DE UNA CATEGORÍA -->
+                <template x-if="categoriaSeleccionada && !subcarpetaSeleccionada && !modoSoloCaducados && busquedaQuery.trim() === ''">
+                    <div class="space-y-5">
+                        <div class="flex items-center justify-between bg-slate-800/80 p-3.5 rounded-2xl border border-white/5 shadow-md">
+                            <button @click="categoriaSeleccionada = null" class="flex items-center gap-2 text-blue-400 text-xs font-black uppercase tracking-wider active:scale-95 transition-transform">
+                                <span class="material-symbols-outlined text-lg">arrow_back</span> Menú Principal
+                            </button>
+                            <span class="text-xs font-black uppercase tracking-widest text-slate-300 bg-slate-900 px-3 py-1 rounded-xl border border-white/5" x-text="obtenerNombreCategoria(categoriaSeleccionada)"></span>
+                        </div>
+
+                        <template x-if="categoriaSeleccionada !== 'TODOS'">
+                            <div class="flex justify-between items-center px-1">
+                                <h3 class="text-xs font-black uppercase tracking-widest text-slate-400">Carpetas de la sección</h3>
+                                <button @click="modalNuevaCarpeta = true" class="px-4 py-2 bg-amber-600/20 text-amber-400 border border-amber-500/30 rounded-xl text-xs font-black uppercase flex items-center gap-1 active:scale-95 transition-transform">
+                                    <span class="material-symbols-outlined text-base">create_new_folder</span> Nueva Carpeta
+                                </button>
+                            </div>
+                        </template>
+
+                        <div class="grid grid-cols-2 gap-3" x-show="obtenerSubcarpetasDeCat(categoriaSeleccionada).length > 0">
+                            <template x-for="sub in obtenerSubcarpetasDeCat(categoriaSeleccionada)" :key="sub.id">
+                                <div @click="subcarpetaSeleccionada = sub.nombre" class="card-doc p-4 flex items-center justify-between border-amber-500/30 bg-amber-500/5 cursor-pointer active:scale-95 transition-transform relative">
+                                    <div class="flex items-center gap-3">
+                                        <span class="material-symbols-outlined text-3xl text-amber-400">folder</span>
+                                        <div>
+                                            <h4 class="font-black text-white text-xs truncate max-w-[100px]" x-text="sub.nombre"></h4>
+                                            <p class="text-[9px] text-slate-400 font-bold" x-text="contarDocsSubcarpeta(categoriaSeleccionada, sub.nombre) + ' docs'"></p>
+                                        </div>
+                                    </div>
+                                    <button @click.stop="borrarSubcarpeta(sub)" class="text-slate-600 hover:text-red-400 p-1">
+                                        <span class="material-symbols-outlined text-lg">delete</span>
+                                    </button>
+                                </div>
+                            </template>
+                        </div>
+
+                        <div class="space-y-3 pt-2">
+                            <h3 class="text-xs font-black uppercase tracking-widest text-slate-400 px-1" x-text="obtenerSubcarpetasDeCat(categoriaSeleccionada).length > 0 ? 'Documentos sueltos' : 'Documentos'"></h3>
+
+                            <div class="grid gap-3">
+                                <template x-if="docsSueltosCategoria.length === 0">
+                                    <div class="text-center p-8 text-slate-600 flex flex-col items-center card-doc">
+                                        <span class="material-symbols-outlined text-5xl mb-3 opacity-40">folder_open</span>
+                                        <p class="font-bold text-xs">No hay documentos sueltos aquí.</p>
+                                    </div>
+                                </template>
+
+                                <template x-for="doc in docsSueltosCategoria" :key="doc.id">
+                                    <div class="card-doc p-4 flex items-center justify-between active:scale-[0.98] transition-transform overflow-hidden relative" 
+                                         :class="{'expiry-warning': esCaducado(doc.fecha), 'nomina-style': doc.categoria === 'NÓMINAS'}">
+                                        
+                                        <div class="flex items-center gap-4 flex-grow cursor-pointer" @click="abrirVisor(doc)">
+                                            <div class="w-14 h-14 rounded-xl overflow-hidden bg-slate-800 flex items-center justify-center border border-white/10 flex-shrink-0 relative">
+                                                <template x-if="!doc.esPDF && doc.dataBase64">
+                                                    <img :src="doc.dataBase64" class="thumb-img opacity-80">
+                                                </template>
+                                                <template x-if="doc.esPDF || !doc.dataBase64">
+                                                    <span class="material-symbols-outlined text-3xl text-red-400">picture_as_pdf</span>
+                                                </template>
+                                                <div class="absolute bottom-0 left-0 right-0 bg-black/60 text-center py-0.5 backdrop-blur-sm">
+                                                    <span class="text-[8px] font-black text-white uppercase tracking-widest" x-text="doc.esPDF ? 'PDF' : 'IMG'"></span>
+                                                </div>
+                                            </div>
+
+                                            <div class="w-full">
+                                                <h3 class="font-black text-white text-sm leading-tight mb-1" x-text="doc.nombre"></h3>
+                                                <div class="flex items-center gap-2">
+                                                    <span class="text-[9px] font-black bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded-md uppercase" x-text="obtenerNombreCategoria(doc.categoria)"></span>
+                                                    <span class="text-slate-600 text-xs">•</span>
+                                                    <p class="text-[10px] font-bold" :class="esCaducado(doc.fecha) ? 'text-red-400' : 'text-slate-400'" x-text="doc.fecha ? formatDate(doc.fecha) : 'Sin caducidad'"></p>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        
+                                        <div class="flex items-center gap-1 z-10 flex-shrink-0">
+                                            <button @click.stop="abrirModalMover(doc)" title="Mover a otra carpeta" class="text-slate-400 p-2 hover:text-purple-400 active:scale-90 transition-transform">
+                                                <span class="material-symbols-outlined text-xl">drive_file_move</span>
+                                            </button>
+                                            <button @click.stop="abrirModalRenovar(doc)" title="Renovar fecha" class="text-slate-400 p-2 hover:text-blue-400 active:scale-90 transition-transform">
+                                                <span class="material-symbols-outlined text-xl">edit_calendar</span>
+                                            </button>
+                                            <button @click.stop="borrar(doc)" title="Borrar" class="text-slate-600 p-2 hover:text-red-500 active:scale-90 transition-transform">
+                                                <span class="material-symbols-outlined text-xl">delete</span>
+                                            </button>
+                                        </div>
+
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+
+                <!-- VISTA 3: DENTRO DE UNA SUBCARPETA ESPECÍFICA -->
+                <template x-if="categoriaSeleccionada && subcarpetaSeleccionada && !modoSoloCaducados && busquedaQuery.trim() === ''">
+                    <div class="space-y-4">
+                        <div class="card-doc p-4 space-y-3 border-amber-500/30 bg-slate-900/90 shadow-xl">
+                            <div class="flex items-center justify-between border-b border-white/5 pb-2.5">
+                                <button @click="subcarpetaSeleccionada = null" class="flex items-center gap-2 text-amber-400 text-xs font-black uppercase tracking-wider active:scale-95 transition-transform">
+                                    <span class="material-symbols-outlined text-lg">arrow_back</span> Volver a <span x-text="categoriaSeleccionada"></span>
+                                </button>
+                                <span class="text-[9px] font-black text-slate-500 uppercase tracking-widest" x-text="docsEnSubcarpeta.length + ' archivos'"></span>
+                            </div>
+
+                            <div class="flex items-center gap-3 pt-0.5">
+                                <div class="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 flex-shrink-0">
+                                    <span class="material-symbols-outlined text-2xl">folder</span>
+                                </div>
+                                <div class="truncate">
+                                    <p class="text-[9px] font-black uppercase tracking-widest text-slate-400">Carpeta Actual</p>
+                                    <h2 class="text-base font-black text-white truncate tracking-wide" x-text="subcarpetaSeleccionada"></h2>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="grid gap-3">
+                            <template x-if="docsEnSubcarpeta.length === 0">
+                                <div class="text-center p-10 text-slate-600 flex flex-col items-center card-doc">
+                                    <span class="material-symbols-outlined text-6xl mb-4 opacity-40">folder_open</span>
+                                    <p class="font-bold text-xs">Carpeta vacía.</p>
+                                </div>
+                            </template>
+
+                            <template x-for="doc in docsEnSubcarpeta" :key="doc.id">
+                                <div class="card-doc p-4 flex items-center justify-between active:scale-[0.98] transition-transform overflow-hidden relative" 
+                                     :class="{'expiry-warning': esCaducado(doc.fecha), 'nomina-style': doc.categoria === 'NÓMINAS'}">
+                                    
+                                    <div class="flex items-center gap-4 flex-grow cursor-pointer" @click="abrirVisor(doc)">
+                                        <div class="w-14 h-14 rounded-xl overflow-hidden bg-slate-800 flex items-center justify-center border border-white/10 flex-shrink-0 relative">
+                                            <template x-if="!doc.esPDF && doc.dataBase64">
+                                                <img :src="doc.dataBase64" class="thumb-img opacity-80">
+                                            </template>
+                                            <template x-if="doc.esPDF || !doc.dataBase64">
+                                                <span class="material-symbols-outlined text-3xl text-red-400">picture_as_pdf</span>
+                                            </template>
+                                            <div class="absolute bottom-0 left-0 right-0 bg-black/60 text-center py-0.5 backdrop-blur-sm">
+                                                <span class="text-[8px] font-black text-white uppercase tracking-widest" x-text="doc.esPDF ? 'PDF' : 'IMG'"></span>
+                                            </div>
+                                        </div>
+
+                                        <div class="w-full">
+                                            <h3 class="font-black text-white text-sm leading-tight mb-1" x-text="doc.nombre"></h3>
+                                            <div class="flex items-center gap-2">
+                                                <span class="text-[9px] font-black bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded-md uppercase" x-text="doc.subcarpeta"></span>
+                                                <span class="text-slate-600 text-xs">•</span>
+                                                <p class="text-[10px] font-bold" :class="esCaducado(doc.fecha) ? 'text-red-400' : 'text-slate-400'" x-text="doc.fecha ? formatDate(doc.fecha) : 'Sin caducidad'"></p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="flex items-center gap-1 z-10 flex-shrink-0">
+                                        <button @click.stop="abrirModalMover(doc)" title="Mover a otra carpeta" class="text-slate-400 p-2 hover:text-purple-400 active:scale-90 transition-transform">
+                                            <span class="material-symbols-outlined text-xl">drive_file_move</span>
+                                        </button>
+                                        <button @click.stop="abrirModalRenovar(doc)" title="Renovar fecha" class="text-slate-400 p-2 hover:text-blue-400 active:scale-90 transition-transform">
+                                            <span class="material-symbols-outlined text-xl">edit_calendar</span>
+                                        </button>
+                                        <button @click.stop="borrar(doc)" title="Borrar" class="text-slate-600 p-2 hover:text-red-500 active:scale-90 transition-transform">
+                                            <span class="material-symbols-outlined text-xl">delete</span>
+                                        </button>
+                                    </div>
+
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                </template>
+            </main>
+        </div>
+    </template>
+
+    <script>
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
+
+        // MOTOR INDEXEDDB UNIFICADO
+        const idbEngine = {
+            dbName: 'DocSafeLocalDB',
+            version: 1,
+            db: null,
+            init() {
+                return new Promise((resolve, reject) => {
+                    const req = indexedDB.open(this.dbName, this.version);
+                    req.onupgradeneeded = (e) => {
+                        const db = e.target.result;
+                        if (!db.objectStoreNames.contains('docsCache')) db.createObjectStore('docsCache', { keyPath: 'id' });
+                        if (!db.objectStoreNames.contains('foldersCache')) db.createObjectStore('foldersCache', { keyPath: 'id' });
+                    };
+                    req.onsuccess = (e) => { this.db = e.target.result; resolve(this.db); };
+                    req.onerror = (e) => reject(e);
+                });
+            },
+            async guardarDoc(doc) {
+                if (!this.db) await this.init();
+                const tx = this.db.transaction('docsCache', 'readwrite');
+                tx.objectStore('docsCache').put(doc);
+            },
+            async obtenerDocs() {
+                if (!this.db) await this.init();
+                return new Promise((resolve) => {
+                    const tx = this.db.transaction('docsCache', 'readonly');
+                    const req = tx.objectStore('docsCache').getAll();
+                    req.onsuccess = () => resolve(req.result || []);
+                });
+            }
+        };
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyC7b6_T0ze2HgXiYHfvUeL12JSXE7ZKogc",
+            authDomain: "misturnos-fe3ea.firebaseapp.com",
+            databaseURL: "https://misturnos-fe3ea-default-rtdb.europe-west1.firebasedatabase.app",
+            projectId: "misturnos-fe3ea",
+            storageBucket: "misturnos-fe3ea.firebasestorage.app",
+            messagingSenderId: "1029095925443",
+            appId: "1:1029095925443:web:873240d85ac5160f392476"
+        };
+
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.firestore();
+        const auth = firebase.auth();
+
+        function docApp() {
+            return {
+                usuarioLogueado: false, loginData: { email: '', pass: '' }, errorLogin: '',
+                showEditor: false, loading: false, statusMsg: '', modalAjustes: false,
+                
+                categorias:[
+                    { id: 'TRABAJO', nombre: 'TRABAJO', icono: 'directions_bus', color: 'text-amber-400', bg: 'bg-amber-500/10' },
+                    { id: 'NÓMINAS', nombre: 'NÓMINAS', icono: 'payments', color: 'text-emerald-400', bg: 'bg-emerald-500/10' },
+                    { id: 'SALUD', nombre: 'SALUD', icono: 'medical_services', color: 'text-red-400', bg: 'bg-red-500/10' },
+                    { id: 'PERSONALES', nombre: 'PERSONALES', icono: 'person', color: 'text-blue-400', bg: 'bg-blue-500/10' },
+                    { id: 'OTROS', nombre: 'OTROS', icono: 'folder', color: 'text-purple-400', bg: 'bg-purple-500/10' }
+                ],
+                
+                categoriaSeleccionada: null,
+                subcarpetaSeleccionada: null,
+                subcarpetas: [], 
+                modalNuevaCarpeta: false,
+                nombreNuevaCarpeta: '',
+                anoSeleccionadoCarpetas: '2026',
+
+                busquedaQuery: '',
+                modoSoloCaducados: false,
+
+                modalMover: false,
+                nuevaCatMover: 'TRABAJO',
+                nuevaSubMover: '',
+
+                docs:[], nuevo: { nombre: '', categoria: 'TRABAJO', subcarpeta: '', fecha: '', esPDF: false },
+                docViewer: false, docActual: null, archivoPendiente: null,
+                cargandoPDF: false, zoomWidth: 100,
+                hayCaducadosAlerta: false,
+
+                modalRenovar: false, docEditando: null, nuevaFechaEdicion: '',
+
+                async init() {
+                    await idbEngine.init();
+                    auth.onAuthStateChanged(async (user) => {
+                        if (user) {
+                            this.usuarioLogueado = true;
+                            const docsLocales = await idbEngine.obtenerDocs();
+                            if (docsLocales.length > 0) this.docs = docsLocales;
+                            this.cargarDatos();
+                            this.cargarSubcarpetas();
+                            this.comprobarArchivosCompartidos();
+                            this.solicitarPermisoNotificaciones();
+                        } else {
+                            this.usuarioLogueado = false;
+                        }
+                    });
+                },
+
+                iniciarSesion() {
+                    if(!this.loginData.email || !this.loginData.pass) { this.errorLogin = "Rellena los datos"; return; }
+                    this.errorLogin = "Comprobando...";
+                    auth.signInWithEmailAndPassword(this.loginData.email, this.loginData.pass)
+                        .then(() => { this.errorLogin = ""; this.loginData.pass = ""; })
+                        .catch(() => { this.errorLogin = "Credenciales incorrectas"; });
+                },
+
+                cerrarSesion() { auth.signOut(); this.docs =[]; this.modalAjustes = false; },
+
+                cargarDatos() {
+                    db.collection("docsafe_b64").orderBy("createdAt", "desc").onSnapshot(snap => {
+                        this.docs = snap.docs.map(d => {
+                            let data = d.data();
+                            if (data.categoria === 'BUS') data.categoria = 'TRABAJO';
+                            const item = { id: d.id, ...data };
+                            idbEngine.guardarDoc(item);
+                            return item;
+                        });
+                        this.verificarCaducidadesYNotificar();
+                    }, err => { console.error("Error BD:", err); });
+                },
+
+                cargarSubcarpetas() {
+                    db.collection("docsafe_folders").onSnapshot(snap => {
+                        this.subcarpetas = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+                    });
+                },
+
+                exportarCopiaSeguridad() {
+                    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(this.docs, null, 2));
+                    const downloadAnchor = document.createElement('a');
+                    downloadAnchor.setAttribute("href", dataStr);
+                    downloadAnchor.setAttribute("download", `DocSafe_Backup_${new Date().toISOString().slice(0,10)}.json`);
+                    document.body.appendChild(downloadAnchor);
+                    downloadAnchor.click();
+                    downloadAnchor.remove();
+                },
+
+                get docsFiltradosBusqueda() {
+                    if (!this.busquedaQuery.trim()) return [];
+                    const q = this.busquedaQuery.toLowerCase();
+                    return this.docs.filter(d => 
+                        (d.nombre && d.nombre.toLowerCase().includes(q)) || 
+                        (d.subcarpeta && d.subcarpeta.toLowerCase().includes(q)) ||
+                        (d.categoria && d.categoria.toLowerCase().includes(q))
+                    );
+                },
+
+                get docsCaducadosLista() {
+                    const hoy = new Date().setHours(0,0,0,0);
+                    return this.docs.filter(d => {
+                        if (!d.fecha || d.categoria === 'NÓMINAS') return false;
+                        const fDoc = new Date(d.fecha).setHours(0,0,0,0);
+                        const diffDias = Math.ceil((fDoc - hoy) / (1000 * 60 * 60 * 24));
+                        return fDoc < hoy || (diffDias <= 30 && diffDias >= 0);
+                    });
+                },
+
+                get totalCaducados() {
+                    return this.docsCaducadosLista.length;
+                },
+
+                async crearCarpeta() {
+                    if (!this.nombreNuevaCarpeta.trim()) return;
+                    try {
+                        await db.collection("docsafe_folders").add({
+                            categoria: this.categoriaSeleccionada,
+                            nombre: this.nombreNuevaCarpeta.trim().toUpperCase(),
+                            createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                        });
+                        this.nombreNuevaCarpeta = '';
+                        this.modalNuevaCarpeta = false;
+                    } catch (e) {
+                        alert("❌ Error al crear la carpeta.");
+                    }
+                },
+
+                async generarCarpetasAnoCompleto() {
+                    const meses = ["ENERO", "FEBRERO", "MARZO", "ABRIL", "MAYO", "JUNIO", "JULIO", "AGOSTO", "SEPTIEMBRE", "OCTUBRE", "NOVIEMBRE", "DICIEMBRE"];
+                    this.loading = true;
+                    this.statusMsg = "Generando 12 subcarpetas...";
+                    try {
+                        for (let m of meses) {
+                            const nombreCarpeta = `${m} ${this.anoSeleccionadoCarpetas}`;
+                            const existe = this.subcarpetas.some(s => s.categoria === this.categoriaSeleccionada && s.nombre === nombreCarpeta);
+                            if (!existe) {
+                                await db.collection("docsafe_folders").add({
+                                    categoria: this.categoriaSeleccionada,
+                                    nombre: nombreCarpeta,
+                                    createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                                });
+                            }
+                        }
+                        this.modalNuevaCarpeta = false;
+                    } catch (e) {
+                        alert("❌ Error al generar carpetas.");
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+
+                async borrarSubcarpeta(sub) {
+                    if (confirm(`¿Borrar la carpeta "${sub.nombre}"? Los documentos pasarán a estar sueltos.`)) {
+                        await db.collection("docsafe_folders").doc(sub.id).delete();
+                    }
+                },
+
+                abrirModalMover(doc) {
+                    this.docEditando = doc;
+                    this.nuevaCatMover = doc.categoria || 'TRABAJO';
+                    this.nuevaSubMover = doc.subcarpeta || '';
+                    this.modalMover = true;
+                },
+
+                async guardarMoverDocumento() {
+                    if (!this.docEditando) return;
+                    try {
+                        await db.collection("docsafe_b64").doc(this.docEditando.id).update({
+                            categoria: this.nuevaCatMover,
+                            subcarpeta: this.nuevaSubMover
+                        });
+                        this.modalMover = false;
+                        this.docEditando = null;
+                    } catch (e) {
+                        alert("❌ Error al mover el documento.");
+                    }
+                },
+
+                obtenerSubcarpetasDeCat(catId) {
+                    return this.subcarpetas.filter(s => s.categoria === catId);
+                },
+
+                seleccionarCategoria(catId) {
+                    this.categoriaSeleccionada = catId;
+                    this.subcarpetaSeleccionada = null;
+                },
+
+                obtenerNombreCategoria(id) {
+                    if (id === 'TODOS') return 'TODOS LOS DOCUMENTOS';
+                    if (id === 'BUS') return 'TRABAJO';
+                    const c = this.categorias.find(item => item.id === id);
+                    return c ? c.nombre : id;
+                },
+
+                contarDocsCat(catId) {
+                    return this.docs.filter(d => d.categoria === catId).length;
+                },
+
+                contarDocsSubcarpeta(catId, subNombre) {
+                    return this.docs.filter(d => d.categoria === catId && d.subcarpeta === subNombre).length;
+                },
+
+                contarCaducadosCat(catId) {
+                    const hoy = new Date().setHours(0,0,0,0);
+                    return this.docs.filter(d => d.categoria === catId && d.fecha && d.categoria !== 'NÓMINAS' && new Date(d.fecha) < hoy).length;
+                },
+
+                get docsSueltosCategoria() {
+                    if (!this.categoriaSeleccionada) return [];
+                    let lista = this.categoriaSeleccionada === 'TODOS' 
+                        ? this.docs 
+                        : this.docs.filter(d => d.categoria === this.categoriaSeleccionada && !d.subcarpeta);
+                    return lista.sort((a, b) => {
+                        const cadA = this.esCaducado(a.fecha), cadB = this.esCaducado(b.fecha);
+                        if(cadA && !cadB) return 1; if(!cadA && cadB) return -1; return 0;
+                    });
+                },
+
+                get docsEnSubcarpeta() {
+                    if (!this.categoriaSeleccionada || !this.subcarpetaSeleccionada) return [];
+                    let lista = this.docs.filter(d => d.categoria === this.categoriaSeleccionada && d.subcarpeta === this.subcarpetaSeleccionada);
+                    return lista.sort((a, b) => {
+                        const cadA = this.esCaducado(a.fecha), cadB = this.esCaducado(b.fecha);
+                        if(cadA && !cadB) return 1; if(!cadA && cadB) return -1; return 0;
+                    });
+                },
+
+                verificarCaducidadesYNotificar() {
+                    let caducados = 0;
+                    const hoy = new Date().setHours(0,0,0,0);
+
+                    this.docs.forEach(doc => {
+                        if (doc.fecha && doc.categoria !== 'NÓMINAS') {
+                            const fDoc = new Date(doc.fecha).setHours(0,0,0,0);
+                            if (fDoc < hoy) {
+                                caducados++;
+                            } else {
+                                const diffDias = Math.ceil((fDoc - hoy) / (1000 * 60 * 60 * 24));
+                                if (diffDias <= 7 && diffDias >= 0) {
+                                    this.lanzarNotificacionPush(`⚠️ Vencimiento Próximo`, `El documento "${doc.nombre}" vence en ${diffDias} días.`);
+                                }
+                            }
+                        }
+                    });
+
+                    if (caducados > 0) {
+                        this.hayCaducadosAlerta = true;
+                        setTimeout(() => { this.hayCaducadosAlerta = false; }, 2000);
+                        this.lanzarNotificacionPush(`🚨 Alerta DocSafe`, `Tienes ${caducados} documento(s) caducado(s).`);
+                    }
+                },
+
+                solicitarPermisoNotificaciones() {
+                    if ("Notification" in window) {
+                        Notification.requestPermission().then(permission => {
+                            if (permission === "granted") {
+                                this.lanzarNotificacionPush("🛡️ DocSafe Notificaciones", "Las alertas de vencimiento están activas.");
+                            }
+                        });
+                    }
+                },
+
+                lanzarNotificacionPush(titulo, cuerpo) {
+                    if ("Notification" in window && Notification.permission === "granted") {
+                        new Notification(titulo, {
+                            body: cuerpo,
+                            icon: "https://cdn-icons-png.flaticon.com/512/1161/1161388.png"
+                        });
+                    }
+                },
+
+                comprobarArchivosCompartidos() {
+                    if (window.location.search.includes('shared=1')) {
+                        caches.open('docsafe-share').then(cache => {
+                            cache.match('/shared-file').then(response => {
+                                if (response) {
+                                    const contentType = response.headers.get('Content-Type') || '';
+                                    const isPDF = contentType.includes('pdf');
+                                    const fileNameHeader = response.headers.get('X-File-Name');
+                                    let nombreOriginal = fileNameHeader ? decodeURIComponent(fileNameHeader) : 'Archivo Recibido';
+
+                                    response.blob().then(blob => {
+                                        const file = new File([blob], nombreOriginal, { type: blob.type });
+                                        this.archivoPendiente = { 
+                                            file, 
+                                            isPDF, 
+                                            nombreVisible: nombreOriginal 
+                                        };
+                                        this.nuevo.nombre = nombreOriginal.replace(/\.[^/.]+$/, "");
+                                        this.showEditor = true;
+                                        cache.delete('/shared-file');
+                                        window.history.replaceState({}, document.title, window.location.pathname);
+                                    });
+                                }
+                            });
+                        });
+                    }
+                },
+
+                async procesarEscanerPDF(event) {
+                    const file = event.target.files[0];
+                    if (!file) return;
+                    if(!this.nuevo.nombre) { 
+                        alert("⚠️ Por favor, escribe un nombre para el documento antes de escanear."); 
+                        event.target.value = ''; 
+                        return; 
+                    }
+
+                    this.loading = true;
+                    this.statusMsg = "Escaneando y optimizando documento...";
+
+                    try {
+                        const base64Escaneado = await this.aplicarFiltroEscanerOptimo(file);
+                        
+                        this.statusMsg = "Generando archivo PDF digital...";
+                        const { jsPDF } = window.jspdf;
+                        const pdf = new jsPDF('p', 'mm', 'a4');
+                        pdf.addImage(base64Escaneado, 'JPEG', 5, 5, 200, 287);
+                        const pdfBase64 = pdf.output('datauristring');
+
+                        this.statusMsg = "Guardando en la nube e IndexedDB...";
+                        await db.collection("docsafe_b64").add({
+                            nombre: this.nuevo.nombre,
+                            categoria: this.nuevo.categoria,
+                            subcarpeta: this.nuevo.subcarpeta || '',
+                            fecha: this.nuevo.fecha,
+                            esPDF: true,
+                            dataBase64: pdfBase64,
+                            createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                        });
+
+                        this.nuevo = { nombre: '', categoria: 'TRABAJO', subcarpeta: '', fecha: '', esPDF: false };
+                        this.showEditor = false;
+                    } catch (e) {
+                        console.error("Error al escanear:", e);
+                        alert("❌ No se pudo procesar la foto del escáner. Prueba a subirla con el botón FOTO.");
+                    } finally {
+                        this.loading = false;
+                        event.target.value = '';
+                    }
+                },
+
+                aplicarFiltroEscanerOptimo(file) {
+                    return new Promise((resolve, reject) => {
+                        const reader = new FileReader(); 
+                        reader.readAsDataURL(file);
+                        reader.onload = (e) => {
+                            const img = new Image(); 
+                            img.src = e.target.result;
+                            img.onload = () => {
+                                const canvas = document.createElement('canvas');
+                                const MAX_H = 1400; 
+                                let w = img.width, h = img.height;
+
+                                if (h > MAX_H) {
+                                    w = Math.round(w * (MAX_H / h));
+                                    h = MAX_H;
+                                }
+
+                                canvas.width = w; 
+                                canvas.height = h;
+                                const ctx = canvas.getContext('2d');
+                                ctx.drawImage(img, 0, 0, w, h);
+
+                                try {
+                                    const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                                    const d = imgData.data;
+                                    for (let i = 0; i < d.length; i += 4) {
+                                        let v = (0.2126 * d[i] + 0.7152 * d[i+1] + 0.0722 * d[i+2]);
+                                        v = v > 128 ? Math.min(255, v * 1.2) : v * 0.7; 
+                                        d[i] = d[i+1] = d[i+2] = v;
+                                    }
+                                    ctx.putImageData(imgData, 0, 0);
+                                    resolve(canvas.toDataURL('image/jpeg', 0.7));
+                                } catch(err) {
+                                    resolve(canvas.toDataURL('image/jpeg', 0.7));
+                                }
+                            };
+                            img.onerror = () => reject(new Error("Error leyendo imagen"));
+                        };
+                        reader.onerror = () => reject(new Error("Error leyendo archivo"));
+                    });
+                },
+
+                abrirModalRenovar(doc) {
+                    this.docEditando = doc;
+                    this.nuevaFechaEdicion = doc.fecha || '';
+                    this.modalRenovar = true;
+                },
+
+                async guardarNuevaFecha() {
+                    if (!this.docEditando) return;
+                    try {
+                        await db.collection("docsafe_b64").doc(this.docEditando.id).update({
+                            fecha: this.nuevaFechaEdicion
+                        });
+                        this.modalRenovar = false;
+                        this.docEditando = null;
+                        this.nuevaFechaEdicion = '';
+                    } catch (e) {
+                        alert("❌ Error al actualizar la fecha.");
+                    }
+                },
+
+                abrirVisor(doc) { 
+                    this.docActual = doc; 
+                    this.docViewer = true; 
+                    this.zoomWidth = 100;
+
+                    if (doc.esPDF) {
+                        this.cargandoPDF = true;
+                        this.$nextTick(() => {
+                            this.renderizarPDFDirecto(doc.dataBase64);
+                        });
+                    }
+                },
+
+                cerrarVisor() {
+                    this.docViewer = false;
+                    this.docActual = null;
+                    this.zoomWidth = 100;
+                    const container = document.getElementById('pdf-viewer-container');
+                    if (container) container.innerHTML = '';
+                },
+
+                zoomIn() { this.zoomWidth = Math.min(this.zoomWidth + 25, 300); },
+                zoomOut() { this.zoomWidth = Math.max(this.zoomWidth - 25, 50); },
+                zoomReset() { this.zoomWidth = 100; },
+
+                async renderizarPDFDirecto(base64Data) {
+                    try {
+                        const container = document.getElementById('pdf-viewer-container');
+                        if (!container) return;
+                        container.innerHTML = ''; 
+
+                        const base64Pure = base64Data.split(';base64,').pop();
+                        const binaryString = atob(base64Pure);
+                        const len = binaryString.length;
+                        const bytes = new Uint8Array(len);
+                        for (let i = 0; i < len; i++) {
+                            bytes[i] = binaryString.charCodeAt(i);
+                        }
+
+                        const loadingTask = pdfjsLib.getDocument({ data: bytes });
+                        const pdf = await loadingTask.promise;
+
+                        for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+                            const page = await pdf.getPage(pageNum);
+                            const viewport = page.getViewport({ scale: 2.0 });
+
+                            const canvas = document.createElement('canvas');
+                            const context = canvas.getContext('2d');
+                            canvas.height = viewport.height;
+                            canvas.width = viewport.width;
+
+                            container.appendChild(canvas);
+
+                            const renderContext = {
+                                canvasContext: context,
+                                viewport: viewport
+                            };
+                            await page.render(renderContext).promise;
+                        }
+                    } catch (e) {
+                        console.error("Error al renderizar PDF:", e);
+                        alert("⚠️ No se pudo renderizar el PDF en el visor.");
+                    } finally {
+                        this.cargandoPDF = false;
+                    }
+                },
+
+                cancelarCompartido() { this.archivoPendiente = null; this.nuevo.nombre = ''; this.showEditor = false; },
+                forzarCancelacion() { this.loading = false; this.statusMsg = "Cancelado"; },
+
+                procesarInputLocal(event, manualPDF) {
+                    const file = event.target.files[0];
+                    if(!file) return;
+                    const esPDF = manualPDF !== null ? manualPDF : (file.type === 'application/pdf');
+                    this.ejecutarSubida(file, esPDF);
+                    event.target.value = '';
+                },
+
+                procesarArchivoPendiente() {
+                    if(!this.archivoPendiente) return;
+                    this.ejecutarSubida(this.archivoPendiente.file, this.archivoPendiente.isPDF);
+                },
+
+                async ejecutarSubida(file, esPDF) {
+                    if(!this.nuevo.nombre) { alert("⚠️ Ponle un nombre al archivo."); return; }
+                    this.loading = true; this.statusMsg = "Procesando...";
+                    let base64Data = "";
+
+                    try {
+                        if (esPDF) {
+                            if (file.size > 900 * 1024) throw new Error("PDF_MUY_GRANDE");
+                            this.statusMsg = "Leyendo PDF...";
+                            base64Data = await this.leerComoBase64(file);
+                        } else {
+                            this.statusMsg = "Comprimiendo Imagen...";
+                            base64Data = await this.comprimirImagen(file);
+                        }
+
+                        this.statusMsg = "Guardando en tu caja fuerte e IndexedDB...";
+                        await db.collection("docsafe_b64").add({
+                            nombre: this.nuevo.nombre,
+                            categoria: this.nuevo.categoria,
+                            subcarpeta: this.nuevo.subcarpeta || '',
+                            fecha: this.nuevo.fecha,
+                            esPDF: esPDF,
+                            dataBase64: base64Data,
+                            createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                        });
+
+                        this.nuevo = { nombre: '', categoria: 'TRABAJO', subcarpeta: '', fecha: '', esPDF: false };
+                        this.showEditor = false;
+                        this.archivoPendiente = null;
+                    } catch(err) {
+                        if (err.message === "PDF_MUY_GRANDE") alert("⚠️ El PDF pesa más de 900 KB. Hazle una foto o escanéalo.");
+                        else alert("❌ Error al guardar. Inténtalo de nuevo.");
+                    } finally { this.loading = false; }
+                },
+
+                comprimirImagen(file) {
+                    return new Promise((resolve) => {
+                        const reader = new FileReader(); reader.readAsDataURL(file);
+                        reader.onload = (e) => {
+                            const img = new Image(); img.src = e.target.result;
+                            img.onload = () => {
+                                const canvas = document.createElement('canvas'); const MAX = 1000;
+                                let w = img.width, h = img.height;
+                                if (w > h) { if (w > MAX) { h *= MAX / w; w = MAX; } } else { if (h > MAX) { w *= MAX / h; h = MAX; } }
+                                canvas.width = w; canvas.height = h;
+                                const ctx = canvas.getContext('2d'); ctx.drawImage(img, 0, 0, w, h);
+                                resolve(canvas.toDataURL('image/jpeg', 0.6)); 
+                            };
+                        };
+                    });
+                },
+
+                leerComoBase64(file) {
+                    return new Promise((resolve, reject) => {
+                        const reader = new FileReader(); reader.readAsDataURL(file);
+                        reader.onload = () => resolve(reader.result); reader.onerror = error => reject(error);
+                    });
+                },
+
+                async borrar(doc) {
+                    if(confirm("¿Destruir archivo definitivamente?")) {
+                        await db.collection("docsafe_b64").doc(doc.id).delete();
+                    }
+                },
+
+                formatDate(f) { if(!f) return ''; const[y, m, d] = f.split('-'); return `${d}/${m}/${y}`; },
+
+                esCaducado(f) { if(!f || this.categoriaSeleccionada === 'NÓMINAS') return false; return new Date(f) < new Date().setHours(0,0,0,0); }
+            }
+        }
+    </script>
+    <div style="display:none;">medbasha</div>
+</body>
+</html>
